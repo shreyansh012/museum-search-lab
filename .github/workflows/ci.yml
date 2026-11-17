@@ -1,0 +1,31 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+      - name: Run the experiment
+        run: python -m museum_search experiment
+      - name: Search with a narrow console encoding
+        env:
+          PYTHONIOENCODING: cp1252
+          PYTHONUTF8: "0"
+        run: python -m museum_search search portrait --limit 400

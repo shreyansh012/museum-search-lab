@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Museum search lab</title>
+<style>
+  :root {
+    --bg: #faf9f6; --fg: #1d1d1b; --muted: #5f5e5a; --line: #d8d5cc;
+    --card: #ffffff; --accent: #1f5f8b; --warn: #8a4b00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a; --fg: #ececea; --muted: #a3a29c; --line: #34363a;
+      --card: #202225; --accent: #7db7e0; --warn: #e0b36a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--fg);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  p.lead { margin: 0 0 20px; color: var(--muted); }
+  label { display: block; font-weight: 600; margin: 14px 0 4px; }
+  input[type=text], select {
+    width: 100%; padding: 10px 12px; font: inherit; color: var(--fg);
+    background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+  }
+  input[type=range] { width: 100%; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .row > div { flex: 1 1 200px; }
+  #status { min-height: 1.5em; color: var(--warn); margin: 12px 0 0; }
+  ol { list-style: none; margin: 16px 0 0; padding: 0; }
+  li {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 14px; margin-bottom: 8px;
+  }
+  li .title { font-weight: 600; }
+  li .meta { color: var(--muted); font-size: 0.9rem; }
+  li .score { float: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  a { color: var(--accent); }
+  footer { margin: 28px 0 0; color: var(--muted); font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Museum search lab</h1>
+  <p class="lead">Search public museum records. Add a "less of this" word to push
+  matching records down. Everything runs in your browser.</p>
+
+  <label for="q">I want</label>
+  <input id="q" type="text" value="silk" autocomplete="off" placeholder="for example: silk">
+
+  <label for="neg">Less of this</label>
+  <input id="neg" type="text" value="dress" autocomplete="off" placeholder="for example: dress">
+
+  <div class="row">
+    <div>
+      <label for="w">Weight: <output id="wout">0.5</output></label>
+      <input id="w" type="range" min="0" max="2" step="0.05" value="0.5">
+    </div>
+    <div>
+      <label for="method">Method</label>
+      <select id="method">
+        <option value="score">score: cos(d,q) - w*cos(d,n)</option>
+        <option value="vector">vector: cos(d, q' - w*n'), unit length</option>
+        <option value="vector-raw">vector-raw: cos(d, q - w*n)</option>
+      </select>
+    </div>
+  </div>
+
+  <p id="status" role="status" aria-live="polite">Loading...</p>
+  <ol id="results"></ol>
+
+  <footer>
+    Data: object records from the Metropolitan Museum of Art Open Access API
+    (CC0). See DATA.md. Subtracting vectors is a known technique; this page
+    makes no claim that it is new.
+  </footer>
+</main>
+<script src="search.js"></script>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var state = null;
+
+  function show() {
+    if (!state) return;
+    var q = $("q").value, neg = $("neg").value;
+    var weight = parseFloat($("w").value);
+    $("wout").textContent = weight.toFixed(2);
+    var list = $("results");
+    list.textContent = "";
+    var notes = [];
+    var u = MuseumSearch.unknownWords(state.model, q);
+    if (u.length) notes.push("Ignored words: " + u.join(", ") + ".");
+    var un = MuseumSearch.unknownWords(state.model, neg);
+    if (un.length) notes.push("Ignored words in 'less of this': " + un.join(", ") + ".");
+    var res = MuseumSearch.search(state.model, state.records, state.docVecs,
+                                  q, neg, weight, $("method").value, 10);
+    if (!res.length) notes.push("No results. Type a word that is in the records.");
+    $("status").textContent = notes.join(" ");
+    res.forEach(function (r) {
+      var li = document.createElement("li");
+      var score = document.createElement("span");
+      score.className = "score";
+      score.textContent = r.score.toFixed(3);
+      var title = document.createElement("div");
+      title.className = "title";
+      if (r.record.url) {
+        var a = document.createElement("a");
+        a.href = r.record.url; a.textContent = r.record.title || "(untitled)";
+        a.target = "_blank"; a.rel = "noopener";
+        title.appendChild(a);
+      } else {
+        title.textContent = r.record.title || "(untitled)";
+      }
+      var meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = [r.record.type, r.record.culture, r.record.medium,
+                          r.record.department].filter(Boolean).join(" | ");
+      li.appendChild(score); li.appendChild(title); li.appendChild(meta);
+      list.appendChild(li);
+    });
+  }
+
+  ["q", "neg", "w", "method"].forEach(function (id) {
+    $(id).addEventListener("input", show);
+  });
+
+  Promise.all([
+    fetch("../data/sample.json").then(function (r) { return r.json(); }),
+    fetch("model.json").then(function (r) { return r.json(); })
+  ]).then(function (parts) {
+    var model = MuseumSearch.makeModel(parts[1]);
+    state = { records: parts[0], model: model,
+              docVecs: MuseumSearch.buildIndex(model, parts[0]) };
+    $("status").textContent = "";
+    show();
+  }).catch(function () {
+    $("status").textContent =
+      "Could not load the data files. Start a local server from the repo " +
+      "folder (python -m http.server 8000) and open /web/ on it.";
+  });
+})();
+</script>
+</body>
+</html>
